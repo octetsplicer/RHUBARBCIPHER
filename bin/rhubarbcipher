@@ -2,7 +2,7 @@
 #
 # Title: RHUBARBCIPHER
 # Version: 0.1.0
-# Description: A plausibly deniable multi-key encryption/decryption system.
+# Description: A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD.
 #
 # WARNING: Please be aware that this gem has not undergone any form of independent security evaluation.
 #
