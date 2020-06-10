@@ -38,6 +38,15 @@ Usage: rhubarbcipher [OPTIONS]
 
 ```
 
+Users may optionally specify a decoy file for generating decoy keys.
+
+Master-keys (whether decoy or real) are split into 10 keys, which may be distributed (or not) at the user's convenience.
+A minimum of 5 keys are required in order to recover the master-key to which those keys pertain.
+
+When run in encrypt mode (`-e` or `--encrypt`), RHUBARBCIPHER should produce an encrypted data file as well as 10 keys (5 of which are required for recovery). If a decoy file was specified, 10 decoy keys will also be generated (5 of which are required for recovery of the decoy data).
+
+When run in decrypt mode (`-e` or `--decrypt`), RHUBARBCIPHER should produce a decrypted data file upon successful decryption.
+
 ## Author
 Copyright (C) 2020 Peter Bruce Funnell
 
