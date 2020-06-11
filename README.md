@@ -1,5 +1,5 @@
 # RHUBARBCIPHER
-A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD written in pure Ruby.
+A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD written in Ruby.
 
 # WARNING
 Please be aware that this gem has not undergone any form of independent security evaluation.
