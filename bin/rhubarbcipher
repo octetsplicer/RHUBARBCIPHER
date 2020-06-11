@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # Title: RHUBARBCIPHER
-# Version: 0.1.0
+# Version: 0.1.1
 # Description: A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD.
 #
 # WARNING: Please be aware that this gem has not undergone any form of independent security evaluation.
@@ -31,16 +31,19 @@ require "zlib"
 class RhubarbCipherCore
 	# Store program information in class variables.
 	@@program_name = "RHUBARBCIPHER"
-	@@program_version  = "0.1.0"
+	@@program_version  = "0.1.1"
 
-	# Define chunk size as 0.5MiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
+	# Define chunk size as 0.1MiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
 	# NOTE: @@chunk_size must be a multiple of 8.
-	@@chunk_size = 500*(2**10)*8
+	@@chunk_size = 100*(2**10)*8
 
 	# Define parameters for key splitting system.
 	@@keysplit_minimum_shares = 5
 	@@keysplit_total_shares = 10
 	@@keysplit_prime = (2**3217)-1
+
+	# Define sleep time.
+	@@sleep_time = 0.0001
 
 	def self.ask(prompt)
 		# Loop until the user provides valid input.
@@ -60,52 +63,72 @@ class RhubarbCipherCore
 		end
 	end
 
+	def self.puts_time(string)
+		# Prepend the string with a timestamp before printing it to the screen.
+		puts("#{Time.now}: #{string}")
+	end
+
 	def self.calculate_chunk_count(data)
 		# Calculate the chunk count for a given piece of data. This method is used for master-key size calculation during the encryption process.
 		return (data.length.to_i*8/@@chunk_size)+1
 	end
 
 	def self.encrypt(real_data, decoy_data=nil, output_directory)
+		# Let the user know that the encryption process has started.
+		puts()
+		self.puts_time("Encryption process started. This could take a long time...")
+
 		# Generate master-key alpha.
+		self.puts_time("Generating master-key alpha...")
 		mkey_alpha = String.new()
 		chunk_count = self.calculate_chunk_count(real_data)
-		(1..(@@chunk_size/8)*chunk_count).each do
-			random_byte = SecureRandom.rand(255).chr
-			mkey_alpha << random_byte
-		end
+		mkey_alpha = SecureRandom.random_bytes((@@chunk_size/8)*chunk_count)
+		mkey_alpha_eb = mkey_alpha.each_byte.to_a
+		self.puts_time("Master-key alpha generated!")
 
 		# Use master-key alpha to generate encrypted data.
+		self.puts_time("Using master-key alpha to encrypt data...")
 		real_data_encrypted = String.new()
 		real_data.each_byte.with_index do |i, j|
-			real_data_encrypted << (i ^ mkey_alpha.each_byte.to_a[j]).chr.force_encoding("ASCII-8BIT")
+			real_data_encrypted << (i ^ mkey_alpha_eb[j])
+			sleep(@@sleep_time)
 		end
+		real_data_encrypted_eb = real_data_encrypted.each_byte.to_a
+		self.puts_time("Encryption of data with master-key alpha complete!")
 
 		# Append random bytes to encrypted data such that it is the same length as both master-keys.
-		((@@chunk_size/8)*chunk_count-real_data.length).times do
-			random_byte = SecureRandom.rand(255).chr
-			real_data_encrypted << random_byte
-		end
+		self.puts_time("Padding random bytes to encrypted data...")
+		real_data_encrypted << SecureRandom.random_bytes(((@@chunk_size/8)*chunk_count)-real_data.length)
+		self.puts_time("Padding complete!")
 
 		# Generate master-key beta if a decoy file was specified.
 		if decoy_data
 			# Generate the first section of master-key beta by applying XOR-ing every byte of decoy_data with its corresponding byte in real_data_encrypted.
+			self.puts_time("Generating main portion of master-key beta from encrypted data and decoy data...")
 			mkey_beta = String.new()
 			decoy_data.each_byte.with_index do |i, j|
-				mkey_beta << (i ^ real_data_encrypted.each_byte.to_a[j]).chr.force_encoding("ASCII-8BIT")
+				mkey_beta << (i ^ real_data_encrypted_eb[j])
+				sleep(@@sleep_time)
 			end
 
 			# Append random bytes to encrypted data such that it is the same length as master-key alpha and the encrypted data.
-			(((@@chunk_size/8)*chunk_count)-decoy_data.length).times do
-				random_byte = SecureRandom.rand(255).chr
-				mkey_beta << random_byte
-			end
+			self.puts_time("Appending random bytes to master-key beta...")
+			mkey_beta << SecureRandom.random_bytes(((@@chunk_size/8)*chunk_count)-decoy_data.length)
+			self.puts_time("Master-key beta generated!")
 		end
 
 		# Prepend a tag to each master-key containing version information and the length of the corresponding data in bytes.
+		self.puts_time("Tagging master-key alpha with version and data length...")
 		mkey_alpha = "[RC:#{@@program_version}:#{real_data.length}]".force_encoding("ASCII-8BIT")+mkey_alpha
-		mkey_beta = "[RC:#{@@program_version}:#{decoy_data.length}]".force_encoding("ASCII-8BIT")+mkey_beta
+		self.puts_time("Master-key alpha tagged!")
+		if decoy_data
+			self.puts_time("Tagging master-key beta with version and data length...")
+			mkey_beta = "[RC:#{@@program_version}:#{decoy_data.length}]".force_encoding("ASCII-8BIT")+mkey_beta
+			self.puts_time("Master-key beta tagged!")
+		end
 
 		# Split master-key alpha into 2000 separate 256B (2048-bit) shares using CLOVERSPLITTER.
+		self.puts_time("Splitting master-key alpha into multiple keys...")
 		mkey_alpha_shares = Array.new()
 		@@keysplit_total_shares.times do
 			mkey_alpha_shares << String.new()
@@ -113,14 +136,18 @@ class RhubarbCipherCore
 		(0..((@@chunk_size*chunk_count)/2048)-1).each.with_index do |i, j|
 			part = mkey_alpha[j*256, 256]
 			subshares = CloverSplitter.generate_shares(part, minimum=@@keysplit_minimum_shares, shares=@@keysplit_total_shares, prime=@@keysplit_prime)
+			sleep(@@sleep_time)
 			subshares.each.with_index do |u, v|
 				subshare_encoded = "<[#{u[0]}]#{Base64.strict_encode64(u[1].to_s).chomp()}>\n"
 				mkey_alpha_shares[v] << subshare_encoded
+				sleep(@@sleep_time)
 			end
 		end
+		self.puts_time("Master-key alpha splitting process complete!")
 
 		# If a decoy file was specified, also split master-key beta into 2000 separate 256B (2048-bit) shares.
 		if decoy_data
+			self.puts_time("Splitting master-key beta into multiple keys...")
 			mkey_beta_shares = Array.new()
 			@@keysplit_total_shares.times do
 				mkey_beta_shares << String.new()
@@ -128,11 +155,14 @@ class RhubarbCipherCore
 			(0..((@@chunk_size*chunk_count)/2048)-1).each.with_index do |i, j|
 				part = mkey_beta[j*256, 256]
 				subshares = CloverSplitter.generate_shares(part, minimum=@@keysplit_minimum_shares, shares=@@keysplit_total_shares, prime=@@keysplit_prime)
+				sleep(@@sleep_time)
 				subshares.each.with_index do |u, v|
 					subshare_encoded = "<[#{u[0]}]#{Base64.strict_encode64(u[1].to_s).chomp()}>\n"
 					mkey_beta_shares[v] << subshare_encoded
+					sleep(@@sleep_time)
 				end
 			end
+			self.puts_time("Master-key beta splitting process complete!")
 		end
 
 		# Create timestamp for filename generation.
@@ -142,36 +172,47 @@ class RhubarbCipherCore
 		version_tag = "[RC:#{@@program_version}]".force_encoding("ASCII-8BIT")
 
 		# Deflate encrypted data with zlib, tag with @@program_version and save the result to output directory.
-		File.open(output_directory+"encrypted_#{timestamp}", "wb") do |file|
+		path = output_directory+"encrypted_#{timestamp}"
+		self.puts_time("Compressing, tagging and saving encrypted data to '#{path}'...")
+		File.open(path, "wb") do |file|
 			deflated_data = Zlib::Deflate.deflate(real_data_encrypted)
 			tagged_data = version_tag+deflated_data
 			file.write(tagged_data)
 		end
+		self.puts_time("Encrypted data saved!")
 
 		# Deflate alpha keys with zlib, tag with @@program_version and save the results to output directory.
+		self.puts_time("Compressing, tagging and saving real keys (derived from master-key alpha):")
 		mkey_alpha_shares.each.with_index do |k, n|
 			index = "%0#{@@keysplit_total_shares.to_s.length}d" % (n+1)
-			File.open(output_directory+"real_key_#{index}_#{timestamp}", "wb") do |file|
+			path = output_directory+"real_key_#{index}_#{timestamp}"
+			self.puts_time("Saving '#{path}'...")
+			File.open(path, "wb") do |file|
 				deflated_data = Zlib::Deflate.deflate(k[0..-2]) # The [0..-2] part removes the newline character present at the end of k.
 				tagged_data = version_tag+deflated_data
 				file.write(tagged_data)
 			end
 		end
+		self.puts_time("Real keys saved!")
 
 		# If a decoy file was specified, deflate beta keys with zlib, tag with @@program_version and save the results to output directory.
 		if decoy_data
+			self.puts_time("Compressing, tagging and saving decoy keys (derived from master-key beta):")
 			mkey_beta_shares.each.with_index do |k, n|
 				index = "%0#{@@keysplit_total_shares.to_s.length}d" % (n+1)
-				File.open(output_directory+"decoy_key_#{index}_#{timestamp}", "wb") do |file|
+				path = output_directory+"decoy_key_#{index}_#{timestamp}"
+				self.puts_time("Saving '#{path}'...")
+				File.open(path, "wb") do |file|
 					deflated_data = Zlib::Deflate.deflate(k[0..-2]) # The [0..-2] part removes the newline character present at the end of k.
 					tagged_data = version_tag+deflated_data
 					file.write(tagged_data)
 				end
 			end
+			self.puts_time("Decoy keys saved!")
 		end
 
 		# Let the user know that encryption was successful.
-		puts("\nEncryption complete. If you used decoy data, please remember to rename all key files such that adversaries do not become aware of that fact.\n\n")
+		self.puts_time("Encryption process complete! If you used decoy data, please remember to rename all key files such that adversaries do not become aware of that fact.\n\n")
 		exit()
 	end
 
@@ -195,7 +236,12 @@ class RhubarbCipherCore
 	end
 
 	def self.decrypt(data, key_list, output_directory)
+		# Let the user know that the encryption process has started.
+		puts()
+		self.puts_time("Decryption process started. This could take a long time...")
+
 		# Untag all keys in key_list.
+		self.puts_time("Untagging keys...")
 		untagged_key_list = Array.new()
 		key_list.each do |k|
 			version_string = k[/\[RC:.*?\]/].split(":")[1][0..-2]
@@ -203,22 +249,29 @@ class RhubarbCipherCore
 				k[/\[RC:.*?\]/] = String.new()
 				untagged_key_list << k
 			else
-				puts("\nIt would appear that the file specified for decryption was made with #{@@program_name} #{version_string}, which is incompatible with this version of #{@@program_name} (#{@@program_version}). Updating to the latest version of #{@@program_name} may fix this issue.\n\n")
+				self.puts_time("It would appear that the file specified for decryption was made with #{@@program_name} #{version_string}, which is incompatible with this version of #{@@program_name} (#{@@program_version}). Updating to the latest version of #{@@program_name} may fix this issue.\n\n")
 				exit()
 			end
 		end
+		self.puts_time("Keys untagged!")
 
 		# Untag and inflate data.
+		self.puts_time("Untagging and decompressing data...")
 		data[/\[RC:.*?\]/] = String.new()
 		data = Zlib::Inflate.inflate(data)
+		self.puts_time("Data untagged and decompressed!")
 
 		# Inflate all keys in untagged_key_list with zlib.
+		self.puts_time("Decompressing keys...")
 		inflated_key_list = Array.new()
 		untagged_key_list.each do |k|
 			inflated_key_list << Zlib::Inflate.inflate(k)
+			sleep(@@sleep_time)
 		end
+		self.puts_time("Keys decompressed!")
 
 		# Parse keys.
+		self.puts_time("Parsing keys...")
 		mkey_shares = Array.new()
 		inflated_key_list.each do |k|
 			k_parts = k.split("\n")
@@ -229,14 +282,20 @@ class RhubarbCipherCore
 				p_extracted[/\[.*?\]/] = String.new()
 				share_j = Base64.strict_decode64(p_extracted).to_i
 				mkey_part_shares << [share_i, share_j]
+				sleep(@@sleep_time)
 			end
 			mkey_shares << mkey_part_shares
+			sleep(@@sleep_time)
 		end
+		self.puts_time("Keys parsed!")
 
 		# Calculate chunk count.
+		self.puts_time("Calculating chunk count...")
 		chunk_count = mkey_shares[0].length
+		self.puts_time("Chunk count calculated!")
 
 		# Attempt recovery of tagged master-key.
+		self.puts_time("Attempting master-key recovery...")
 		mkey_tagged = String.new()
 		(0..chunk_count-1).each do |i|
 			chunk_shares = Array.new()
@@ -245,49 +304,59 @@ class RhubarbCipherCore
 			end
 			begin
 				recovered_chunk = CloverSplitter.recover_secret(chunk_shares, prime=@@keysplit_prime)
+				sleep(@@sleep_time)
 				if recovered_chunk.length != 256
-					puts("\nSomething went wrong when attempting to recover the master-key from the provided key list, leading to an invalid chunk length.\n\n")
+					self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list, leading to an invalid chunk length.\n\n")
 					exit()
 				end
 				mkey_tagged << recovered_chunk
 			rescue
-				puts("\nSomething went wrong when attempting to recover the master-key from the provided key list.\n\n")
+				self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list.\n\n")
 				exit()
 			end
 		end
 
 		# Attempt to untag master-key.
+		self.puts_time("Untagging master-key...")
 		if mkey_tagged[/\[RC:.*?\]/]
 			tag = mkey_tagged[/\[RC:.*?\]/]
 			mkey_tagged[/\[RC:.*?\]/] = String.new()
 			tag_array = tag[1..-2].split(":")
 			if not self.version_comparison(tag_array[1])
-				puts("\nIt would appear that the master-key recovered from the provided key list was generated using #{@@program_name} #{version_string}, which is incompatible with this version of #{@@program_name} (#{@@program_version}). Updating to the latest version of #{@@program_version} may fix this issue.\n\n")
+				self.puts_time("It would appear that the master-key recovered from the provided key list was generated using #{@@program_name} #{version_string}, which is incompatible with this version of #{@@program_name} (#{@@program_version}). Updating to the latest version of #{@@program_version} may fix this issue.\n\n")
 			end
 			decrypted_data_size = tag_array[-1].to_i
 			mkey = mkey_tagged
+			mkey_eb = mkey.each_byte.to_a
 		else
 			# Recovery seems to have failed.
-			puts("\nSomething went wrong when attempting to recover the master-key from the provided key list, resulting in a malformed tag.\n\n")
+			self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list, resulting in a malformed tag.\n\n")
 			exit()
 		end
+		self.puts_time("Master-key recovered!")
 
 		# Attempt to decrypt specified data using recovered master-key.
+		self.puts_time("Attempting to decrypt data using recovered master-key...")
 		decrypted_data = String.new()
 		(0..decrypted_data_size-1).each do |i|
-			decrypted_data << (data.each_byte.to_a[i] ^ mkey.each_byte.to_a[i]).chr.force_encoding("ASCII-8BIT")
+			decrypted_data << (data.each_byte.to_a[i] ^ mkey_eb[i])
+			sleep(@@sleep_time)
 		end
+		self.puts_time("Data decrypted!")
 
 		# Create timestamp for filename generation.
 		timestamp = (Time.now.to_f*1000).to_i
 
 		# Save decrypted data to output directory.
-		File.open(output_directory+"decrypted_#{timestamp}", "wb") do |file|
+		path = output_directory+"decrypted_#{timestamp}"
+		self.puts_time("Saving decrypted data to '#{path}'...")
+		File.open(path, "wb") do |file|
 			file.write(decrypted_data)
 		end
+		self.puts_time("Decrypted data saved!")
 
 		# Let the user know that decryption was successful.
-		puts("\nDecryption complete.")
+		puts("\nDecryption process complete.")
 		exit()
 	end
 
@@ -429,7 +498,12 @@ class RhubarbCipherCore
 			end
 
 			# Pass the real data, decoy data and output directory to the decrypt method.
-			self.encrypt(real_data, decoy_data, output_directory)
+			begin
+				self.encrypt(real_data, decoy_data, output_directory)
+			rescue Interrupt
+				puts("\nSIGINT received. Exiting...\n\n")
+				exit()
+			end
 		elsif arguments[:decrypt]
 			# Create an array from the comma-separated list of key files.
 			key_file_list = arguments[:keys].split(",")
@@ -444,7 +518,12 @@ class RhubarbCipherCore
 			data = File.read(arguments[:decrypt], mode:"rb")
 
 			# Pass the data, list of keys and output directory to the decrypt method.
-			self.decrypt(data, key_list, output_directory)
+			begin
+				self.decrypt(data, key_list, output_directory)
+			rescue Interrupt
+				puts("\nSIGINT received. Exiting...\n\n")
+				exit()
+			end
 		end
 	end
 end
