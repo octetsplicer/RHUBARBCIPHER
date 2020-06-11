@@ -5,7 +5,11 @@ A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BS
 Please be aware that this gem has not undergone any form of independent security evaluation.
 
 ## Description
-RHUBARBCIPHER is a plausibly deniable multi-key file encryption/decryption system for GNU/Linux and BSD that combines one-time pad encryption/decryption with Shamir's Secret Sharing in an attempt to encrypt files in a versatile yet information-theoretically secure manner. It includes an optional decoy feature which allows users to specify a decoy file and generate a set of decoy keys in addition to the real keys. Size similarity between the decoy file and the real file is strictly enforced.
+RHUBARBCIPHER is a plausibly deniable multi-key file encryption/decryption system for GNU/Linux and BSD that combines one-time pad encryption/decryption with Shamir's Secret Sharing in an attempt to encrypt files in a versatile yet information-theoretically secure manner.
+
+*Although RHUBARBCIPHER should technically work on larger files, it is only recommended for small files (e.g. <2MB) as the encryption process is currently very slow. I hope to speed it up in later versions.*
+
+It includes an optional decoy feature which allows users to specify a decoy file and generate a set of decoy keys in addition to the real keys. Size similarity between the decoy file and the real file is strictly enforced.
 
 ## Dependencies
 * Ruby >= 2.5.5 (RHUBARBCIPHER has not been tested on anything below 2.5.5)
