@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # Title: RHUBARBCIPHER
-# Version: 0.2.3
+# Version: 0.2.2
 # Description: A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD.
 #
 # WARNING: Please be aware that this gem has not undergone any form of independent security evaluation.
@@ -32,7 +32,7 @@ require "xorcist"
 class RhubarbCipherCore
 	# Store program information in class variables.
 	@@program_name = "RHUBARBCIPHER"
-	@@program_version  = "0.2.3"
+	@@program_version  = "0.2.2"
 	@@executable_name = "rhubarbcipher"
 
 	# Define chunk size as 500 KiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
