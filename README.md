@@ -7,14 +7,15 @@ Please be aware that this gem has not undergone any form of independent security
 ## Description
 RHUBARBCIPHER is a plausibly deniable multi-key file encryption/decryption system for GNU/Linux and BSD that combines one-time pad encryption/decryption with Shamir's Secret Sharing in an attempt to encrypt files in a versatile yet information-theoretically secure manner.
 
-*Although RHUBARBCIPHER should technically work on larger files, it is only recommended for small files (e.g. <2MB) as the encryption process is currently very slow. I hope to speed it up in later versions.*
-
 It includes an optional decoy feature which allows users to specify a decoy file and generate a set of decoy keys in addition to the real keys. Size similarity between the decoy file and the real file is strictly enforced.
+
+*Although RHUBARBCIPHER should technically work on larger files, it is only recommended for smaller files (e.g. less than < 15000KiB) due to the time taken to encrypt/decrypt data.*
 
 ## Dependencies
 * Ruby >= 2.5.5 (RHUBARBCIPHER has not been tested on anything below 2.5.5)
 * CLOVERSPLITTER >= 0.2.1 (https://rubygems.org/gems/cloversplitter) (https://github.com/octetsplicer/CLOVERSPLITTER)
 * SecureRandom (included in the Ruby Standard Library)
+* Xorcist >= 1.1.2 (https://rubygems.org/gems/xorcist)
 
 ## Installation
 RHUBARBCIPHER can be installed as follows:
@@ -50,6 +51,26 @@ A minimum of 5 keys are required in order to recover the master-key to which tho
 When run in encrypt mode (`-e` or `--encrypt`), RHUBARBCIPHER should produce an encrypted data file as well as 10 keys (5 of which are required for recovery). If a decoy file was specified, 10 decoy keys will also be generated (5 of which are required for recovery of the decoy data).
 
 When run in decrypt mode (`-e` or `--decrypt`), RHUBARBCIPHER should produce a decrypted data file upon successful decryption.
+
+For example, if one were to encrypt a file called `test` with a file called `test_decoy` specified as the decoy, and output everything into the current working directory, they could use the following command:
+
+```
+rhubarbcipher -e test -D test_decoy -o .
+```
+
+Using the above command should have produced 10 files starting with `real_key_`, 10 files starting with `decoy_key_` and one file starting with `encrypted_`.
+
+To recover the real data, the user must use at least 5 out of the 10 real keys. For example:
+
+```
+rhubarbcipher -d encrypted_1591853713322 -k real_key_07_1591853713322,real_key_04_1591853713322,real_key_09_1591853713322,real_key_02_1591853713322,real_key_06_1591853713322 -o .
+```
+
+Recovering the decoy data works in exactly the same way, but the user must specify at least 5 decoy keys instead of real keys. For example:
+
+```
+rhubarbcipher -d encrypted_1591853713322 -k decoy_key_07_1591853713322,decoy_key_04_1591853713322,decoy_key_09_1591853713322,decoy_key_02_1591853713322,decoy_key_06_1591853713322 -o .
+```
 
 ## Author
 Copyright (C) 2020 Peter Bruce Funnell
