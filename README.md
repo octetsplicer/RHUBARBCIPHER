@@ -9,7 +9,7 @@ RHUBARBCIPHER is a plausibly deniable multi-key file encryption/decryption syste
 
 It includes an optional decoy feature which allows users to specify a decoy file and generate a set of decoy keys in addition to the real keys. Size similarity between the decoy file and the real file is strictly enforced.
 
-*Although RHUBARBCIPHER should technically work on larger files, it is only recommended for smaller files (e.g. less than < 15000KiB) due to the time taken to encrypt/decrypt data.*
+*Although RHUBARBCIPHER should technically work on larger files, it is only recommended for smaller files (e.g. less than < 15000KiB) due to the amount of time taken to encrypt/decrypt data. The size of all keys combined is substantially greater than that of the original data. Additionally, the encryption or decryption of large files could potentially require more memory than your computer has available. For this reason, RHUBARBCIPHER should be used with caution.*
 
 ## Dependencies
 * Ruby >= 2.5.5 (RHUBARBCIPHER has not been tested on anything below 2.5.5)
