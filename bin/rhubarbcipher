@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # Title: RHUBARBCIPHER
-# Version: 0.2.0
+# Version: 0.2.3
 # Description: A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD.
 #
 # WARNING: Please be aware that this gem has not undergone any form of independent security evaluation.
@@ -32,7 +32,7 @@ require "xorcist"
 class RhubarbCipherCore
 	# Store program information in class variables.
 	@@program_name = "RHUBARBCIPHER"
-	@@program_version  = "0.2.0"
+	@@program_version  = "0.2.3"
 	@@executable_name = "rhubarbcipher"
 
 	# Define chunk size as 500 KiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
@@ -462,18 +462,18 @@ class RhubarbCipherCore
 
 		# Encrypt or decrypt, depending on run mode.
 		if arguments[:encrypt]
-			# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
-			if File.size(arguments[:encrypt])*8 > @@large_file_threshold
-				print("\n")
-				confirmation = self.ask("The file you specified for encryption is over #{@@large_file_threshold_string}. Large files may take a very long time to encrypt/decrypt using #{@@program_name}. Are you sure you wish to continue?")
-				if not confirmation
-					puts()
-					exit()
-				end
-			end
-
 			# Load real data from specified file.
 			begin
+				# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
+				if File.size(arguments[:encrypt])*8 > @@large_file_threshold
+					print("\n")
+					confirmation = self.ask("The file you specified for encryption is over #{@@large_file_threshold_string}. Large files may take a very long time to encrypt/decrypt using #{@@program_name}. Are you sure you wish to continue?")
+					if not confirmation
+						puts()
+						exit()
+					end
+				end
+
 				real_data = File.read(arguments[:encrypt], mode:"rb")
 			rescue
 				puts("\nThe file specified for encryption could not be loaded. Please confirm that the file exists and is readable by the current user.\n\n")
@@ -511,27 +511,35 @@ class RhubarbCipherCore
 				exit()
 			end
 		elsif arguments[:decrypt]
-			# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
-			if File.size(arguments[:encrypt])*8 > @@large_file_threshold
-				print("\n")
-				confirmation = self.ask("The file you specified for decryption is over 15000KiB. It may take a very long time to decrypt. Are you sure you wish to continue?")
-				if not confirmation
-					puts()
-					exit()
+			begin
+				# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
+				if File.size(arguments[:decrypt])*8 > @@large_file_threshold
+					print("\n")
+					confirmation = self.ask("The file you specified for decryption is over 15000KiB. It may take a very long time to decrypt. Are you sure you wish to continue?")
+					if not confirmation
+						puts()
+						exit()
+					end
 				end
+
+				# Read data from the file specified for decryption.
+				data = File.read(arguments[:decrypt], mode:"rb")
+			rescue
+				puts("\nSomething went wrong when trying to read the file specified for decryption. Please confirm that the path is valid.\n\n")
 			end
 
-			# Create an array from the comma-separated list of key files.
-			key_file_list = arguments[:keys].split(",")
+			begin
+				# Create an array from the comma-separated list of key files.
+				key_file_list = arguments[:keys].split(",")
 
-			# Read each key file to create a list of keys.
-			key_list = Array.new()
-			key_file_list.each do |file|
-				key_list << File.read(file, mode:"rb")
+				# Read each key file to create a list of keys.
+				key_list = Array.new()
+				key_file_list.each do |file|
+					key_list << File.read(file, mode:"rb")
+				end
+			rescue
+				puts("\nSomething went wrong when trying to read the specified keys. Please confirm that all paths in the comma-separated list are valid.\n\n")
 			end
-
-			# Read data from the file specified for decryption.
-			data = File.read(arguments[:decrypt], mode:"rb")
 
 			# Pass the data, list of keys and output directory to the decrypt method.
 			begin
