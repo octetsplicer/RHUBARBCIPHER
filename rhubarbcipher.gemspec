@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
 	s.name = "rhubarbcipher"
-	s.version = "0.1.1"
+	s.version = "0.1.2"
 	s.date = "2020-06-11"
 	s.summary = "A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD."
 	s.description = "RHUBARBCIPHER is a plausibly deniable multi-key file encryption/decryption system for GNU/Linux and BSD that combines one-time pad encryption/decryption with Shamir's Secret Sharing in an attempt to encrypt files in a versatile yet information-theoretically secure manner. It includes an optional decoy feature which allows users to specify a decoy file and generate a set of decoy keys in addition to the real keys. Size similarity between the decoy file and the real file is strictly enforced. WARNING: Please be aware that this gem has not undergone any form of independent security evaluation."
