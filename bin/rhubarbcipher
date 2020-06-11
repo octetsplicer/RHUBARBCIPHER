@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # Title: RHUBARBCIPHER
-# Version: 0.1.2
+# Version: 0.2.0
 # Description: A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD.
 #
 # WARNING: Please be aware that this gem has not undergone any form of independent security evaluation.
@@ -26,16 +26,18 @@ require "optparse"
 require "fileutils"
 require "base64"
 require "zlib"
+require "xorcist"
 
 # Define a class for storing core functionality of RHUBARBCIPHER
 class RhubarbCipherCore
 	# Store program information in class variables.
 	@@program_name = "RHUBARBCIPHER"
-	@@program_version  = "0.1.2"
+	@@program_version  = "0.2.0"
+	@@executable_name = "rhubarbcipher"
 
-	# Define chunk size as 0.1MiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
+	# Define chunk size as 500 KiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
 	# NOTE: @@chunk_size must be a multiple of 8.
-	@@chunk_size = 100*(2**10)*8
+	@@chunk_size = 500*(2**10)*8
 
 	# Define parameters for key splitting system.
 	@@keysplit_minimum_shares = 5
@@ -44,6 +46,10 @@ class RhubarbCipherCore
 
 	# Define sleep time.
 	@@sleep_time = 0.0001
+
+	# Set a threshold for large file detection (15000 KiB in bits).
+	@@large_file_threshold = 15000*(2**10)*8
+	@@large_file_threshold_string = "15000KiB"
 
 	def self.ask(prompt)
 		# Loop until the user provides valid input.
@@ -83,17 +89,11 @@ class RhubarbCipherCore
 		mkey_alpha = String.new()
 		chunk_count = self.calculate_chunk_count(real_data)
 		mkey_alpha = SecureRandom.random_bytes((@@chunk_size/8)*chunk_count)
-		mkey_alpha_eb = mkey_alpha.each_byte.to_a
 		self.puts_time("Master-key alpha generated!")
 
 		# Use master-key alpha to generate encrypted data.
 		self.puts_time("Using master-key alpha to encrypt data...")
-		real_data_encrypted = String.new()
-		real_data.each_byte.with_index do |i, j|
-			real_data_encrypted << (i ^ mkey_alpha_eb[j])
-			sleep(@@sleep_time)
-		end
-		real_data_encrypted_eb = real_data_encrypted.each_byte.to_a
+		real_data_encrypted = Xorcist.xor(real_data, mkey_alpha)
 		self.puts_time("Encryption of data with master-key alpha complete!")
 
 		# Append random bytes to encrypted data such that it is the same length as both master-keys.
@@ -105,11 +105,7 @@ class RhubarbCipherCore
 		if decoy_data
 			# Generate the first section of master-key beta by applying XOR-ing every byte of decoy_data with its corresponding byte in real_data_encrypted.
 			self.puts_time("Generating main portion of master-key beta from encrypted data and decoy data...")
-			mkey_beta = String.new()
-			decoy_data.each_byte.with_index do |i, j|
-				mkey_beta << (i ^ real_data_encrypted_eb[j])
-				sleep(@@sleep_time)
-			end
+			mkey_beta = Xorcist.xor(decoy_data, real_data_encrypted)
 
 			# Append random bytes to encrypted data such that it is the same length as master-key alpha and the encrypted data.
 			self.puts_time("Appending random bytes to master-key beta...")
@@ -256,10 +252,15 @@ class RhubarbCipherCore
 		self.puts_time("Keys untagged!")
 
 		# Untag and inflate data.
-		self.puts_time("Untagging and decompressing data...")
-		data[/\[RC:.*?\]/] = String.new()
-		data = Zlib::Inflate.inflate(data)
-		self.puts_time("Data untagged and decompressed!")
+		begin
+			self.puts_time("Untagging and decompressing data...")
+			data[/\[RC:.*?\]/] = String.new()
+			data = Zlib::Inflate.inflate(data)
+			self.puts_time("Data untagged and decompressed!")
+		rescue
+			self.puts_time("Something went wrong whilst untagging and decompressing the data.\n\n")
+			exit()
+		end
 
 		# Inflate all keys in untagged_key_list with zlib.
 		self.puts_time("Decompressing keys...")
@@ -327,7 +328,6 @@ class RhubarbCipherCore
 			end
 			decrypted_data_size = tag_array[-1].to_i
 			mkey = mkey_tagged
-			mkey_eb = mkey.each_byte.to_a
 		else
 			# Recovery seems to have failed.
 			self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list, resulting in a malformed tag.\n\n")
@@ -337,11 +337,7 @@ class RhubarbCipherCore
 
 		# Attempt to decrypt specified data using recovered master-key.
 		self.puts_time("Attempting to decrypt data using recovered master-key...")
-		decrypted_data = String.new()
-		(0..decrypted_data_size-1).each do |i|
-			decrypted_data << (data.each_byte.to_a[i] ^ mkey_eb[i])
-			sleep(@@sleep_time)
-		end
+		decrypted_data = Xorcist.xor(data, mkey)[0..decrypted_data_size-1]
 		self.puts_time("Data decrypted!")
 
 		# Create timestamp for filename generation.
@@ -369,13 +365,13 @@ class RhubarbCipherCore
 
 		# Ensure that the current system is either GNU/Linux or BSD.
 		if not (RUBY_PLATFORM.include?("linux") or RUBY_PLATFORM.include?("bsd"))
-			puts("RHUBARBCIPHER is intended for GNU/Linux and BSD operating systems only. Exiting...\n\n")
+			puts("#{@@program_name} is intended for GNU/Linux and BSD operating systems only. Exiting...\n\n")
 			exit()
 		end
 
 		# Initialise command line argument parser.
 		option_parser = OptionParser.new do |options|
-			options.banner = "\nUsage: rhubarbcipher [OPTIONS]\n\n"
+			options.banner = "\nUsage: #{@@executable_name} [OPTIONS]\n\n"
 			options.on("-h", "--help", "Display help text and exit.\n\n")
 			options.on("-v", "--version", "Display version information and exit.\n\n")
 			options.on("-e FILE", "--encrypt FILE", "Encrypt the specified file. An output directory must be specified with '-o' or '--output'.\n\n")
@@ -389,7 +385,7 @@ class RhubarbCipherCore
 		begin
 			if ARGV.length < 1
 				# No command line arguments were detected; there is no reason to continue, so exit.
-				puts("\nNo command line arguments were detected. If you would like to view the help text, please execute RHUBARBCIPHER with the -h command line argument.\n\n")
+				puts("\nNo command line arguments were detected. If you would like to view the help text, please execute #{@@program_name} with the -h command line argument.\n\n")
 				exit()
 			else
 				# Command line arguments were detected, so parse those arguments and store the result in a new hash. 
@@ -466,6 +462,16 @@ class RhubarbCipherCore
 
 		# Encrypt or decrypt, depending on run mode.
 		if arguments[:encrypt]
+			# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
+			if File.size(arguments[:encrypt])*8 > @@large_file_threshold
+				print("\n")
+				confirmation = self.ask("The file you specified for encryption is over #{@@large_file_threshold_string}. Large files may take a very long time to encrypt/decrypt using #{@@program_name}. Are you sure you wish to continue?")
+				if not confirmation
+					puts()
+					exit()
+				end
+			end
+
 			# Load real data from specified file.
 			begin
 				real_data = File.read(arguments[:encrypt], mode:"rb")
@@ -489,7 +495,7 @@ class RhubarbCipherCore
 
 				# Compare chunk count of decoy data with that of real data and enforce size similarity.
 				if real_data_chunk_count != decoy_data_chunk_count
-					puts("\nViolation of size similarity rule detected when comparing size of decoy file with size of file specified for encryption.\n\nFor security reasons, the size of the decoy file must be similar to that of the file specified for encryption. Specifically, if 'A' is the size of the real file in mebibits (MiB) and 'B' is the size of the decoy file in mebibits (MiB), the condition 'A\\0.1 = B\\0.1' must be satisfied, where '\\' is the integer division operator defined as 'A\\B ≡ ⌊A/B⌋' (alternatively defined as a quotient without the remainder).\n\nThe size similarity rule is strictly enforced as a countermeasure against adversaries determining whether or not decoy data was used during encryption under certain post-decryption circumstances. If this rule were not enforced, an adversary would be able to easily know whether or not a decoy file was used during the encryption process by examining file sizes.\n\n")
+					puts("\nViolation of size similarity rule detected when comparing size of decoy file with size of file specified for encryption.\n\nFor security reasons, the size of the decoy file must be similar to that of the file specified for encryption. Specifically, if 'A' is the size of the real file in kibibytes (KiB) and 'B' is the size of the decoy file in kibibytes (KiB), the condition 'A\\500 = B\\500' must be satisfied, where '\\' is the integer division operator defined as 'A\\B ≡ ⌊A/B⌋' (alternatively defined as a quotient without the remainder).\n\nThe size similarity rule is strictly enforced as a countermeasure against adversaries determining whether or not decoy data was used during encryption under certain post-decryption circumstances. If this rule were not enforced, an adversary would be able to easily know whether or not a decoy file was used during the encryption process by examining file sizes.\n\n")
 					exit()
 				end
 			else
@@ -505,6 +511,16 @@ class RhubarbCipherCore
 				exit()
 			end
 		elsif arguments[:decrypt]
+			# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
+			if File.size(arguments[:encrypt])*8 > @@large_file_threshold
+				print("\n")
+				confirmation = self.ask("The file you specified for decryption is over 15000KiB. It may take a very long time to decrypt. Are you sure you wish to continue?")
+				if not confirmation
+					puts()
+					exit()
+				end
+			end
+
 			# Create an array from the comma-separated list of key files.
 			key_file_list = arguments[:keys].split(",")
 
