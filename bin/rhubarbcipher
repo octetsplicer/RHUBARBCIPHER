@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # Title: RHUBARBCIPHER
-# Version: 0.1.1
+# Version: 0.1.2
 # Description: A plausibly deniable multi-key encryption/decryption system for GNU/Linux and BSD.
 #
 # WARNING: Please be aware that this gem has not undergone any form of independent security evaluation.
@@ -31,7 +31,7 @@ require "zlib"
 class RhubarbCipherCore
 	# Store program information in class variables.
 	@@program_name = "RHUBARBCIPHER"
-	@@program_version  = "0.1.1"
+	@@program_version  = "0.1.2"
 
 	# Define chunk size as 0.1MiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
 	# NOTE: @@chunk_size must be a multiple of 8.
@@ -489,7 +489,7 @@ class RhubarbCipherCore
 
 				# Compare chunk count of decoy data with that of real data and enforce size similarity.
 				if real_data_chunk_count != decoy_data_chunk_count
-					puts("\nViolation of size similarity rule detected when comparing size of decoy file with size of file specified for encryption.\n\nFor security reasons, the size of the decoy file must be similar to that of the file specified for encryption. Specifically, if 'A' is the size of the real file in mebibits (MiB) and 'B' is the size of the decoy file in mebibits (MiB), the condition 'A\\0.5 = B\\0.5' must be satisfied, where '\\' is the integer division operator defined as 'A\\B ≡ ⌊A/B⌋' (alternatively defined as a quotient without the remainder).\n\nThe size similarity rule is strictly enforced as a countermeasure against adversaries determining whether or not decoy data was used during encryption under certain post-decryption circumstances. If this rule were not enforced, an adversary would be able to easily know whether or not a decoy file was used during the encryption process by examining file sizes.\n\n")
+					puts("\nViolation of size similarity rule detected when comparing size of decoy file with size of file specified for encryption.\n\nFor security reasons, the size of the decoy file must be similar to that of the file specified for encryption. Specifically, if 'A' is the size of the real file in mebibits (MiB) and 'B' is the size of the decoy file in mebibits (MiB), the condition 'A\\0.1 = B\\0.1' must be satisfied, where '\\' is the integer division operator defined as 'A\\B ≡ ⌊A/B⌋' (alternatively defined as a quotient without the remainder).\n\nThe size similarity rule is strictly enforced as a countermeasure against adversaries determining whether or not decoy data was used during encryption under certain post-decryption circumstances. If this rule were not enforced, an adversary would be able to easily know whether or not a decoy file was used during the encryption process by examining file sizes.\n\n")
 					exit()
 				end
 			else
