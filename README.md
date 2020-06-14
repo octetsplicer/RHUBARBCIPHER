@@ -50,7 +50,7 @@ A minimum of 5 keys are required in order to recover the master-key to which tho
 
 When run in encrypt mode (`-e` or `--encrypt`), RHUBARBCIPHER should produce an encrypted data file as well as 10 keys (5 of which are required for recovery). If a decoy file was specified, 10 decoy keys will also be generated (5 of which are required for recovery of the decoy data).
 
-When run in decrypt mode (`-e` or `--decrypt`), RHUBARBCIPHER should produce a decrypted data file upon successful decryption.
+When run in decrypt mode (`-d` or `--decrypt`), RHUBARBCIPHER should produce a decrypted data file upon successful decryption.
 
 For example, if one were to encrypt a file called `test` with a file called `test_decoy` specified as the decoy, and output everything into the current working directory, they could use the following command:
 
