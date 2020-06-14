@@ -1,7 +1,7 @@
 # RHUBARBCIPHER (루바브사이퍼)
 GNU/리눅스 및 BSD를 위한 거부 가능한 암호화 도구
 
-(English)[README.md] | (한국어)[README.ko.md]
+[English](README.md) | [한국어](README.ko.md)
 
 # 주의
 이 도구는 아직까지 개발 중이며 외부 보안 평가를 받지 못했습니다.
