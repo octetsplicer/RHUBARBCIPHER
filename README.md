@@ -105,7 +105,7 @@ Both `mkey_alpha` and `mkey_beta` are then split into 2000 separate 256B (2048-b
 
 CLOVERSPLITTER splits each individual piece of `mkey_alpha` and `mkey_beta` into 10 shares.
 
-Efectively, `mkey_alpha` and `mkey_beta` are split into 10 separate sub-keys (which are simply referred to as *keys*).
+Effectively, `mkey_alpha` and `mkey_beta` are split into 10 separate sub-keys (which are simply referred to as *keys*).
 
 In order to recover `mkey_alpha`, at least 5 of the 10 keys into which `mkey_alpha` was split are required.
 
