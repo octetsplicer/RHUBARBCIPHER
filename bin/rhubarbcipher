@@ -1,0 +1,579 @@
+#!/usr/bin/env ruby
+#
+# Title: RHUBARBCIPHER
+# Version: 0.2.5
+# Description: An experimental multi-key encryption/decryption system for GNU/Linux and BSD.
+#
+# WARNING: Please be aware that this gem has not undergone any form of independent security evaluation
+# and is provided for academic/educational purposes only. RHUBARBCIPHER should not be used to encrypt
+# any data with high confidentiality, availability or integrity requirements, and should be treated
+# purely as a proof of concept and/or learning exercise.
+#
+# Copyright (C) 2020 Peter Bruce Funnell
+#
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU
+# General Public License as published by the Free Software Foundation, either version 3 of the License,
+# or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+# the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public
+# License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program. If not,
+# see <https://www.gnu.org/licenses/>. 
+
+# Load the necessary gems
+require "cloversplitter"
+require "securerandom"
+require "optparse"
+require "fileutils"
+require "base64"
+require "zlib"
+require "xorcist"
+
+# Define a class for storing core functionality of RHUBARBCIPHER
+class RhubarbCipherCore
+	# Store program information in class variables.
+	@@program_name = "RHUBARBCIPHER"
+	@@program_version  = "0.2.5"
+	@@executable_name = "rhubarbcipher"
+
+	# Define chunk size as 500 KiB in bits (used to enforce size similarity between real data and decoy data for the encryption process).
+	# NOTE: @@chunk_size must be a multiple of 8.
+	@@chunk_size = 500*(2**10)*8
+
+	# Define parameters for key splitting system.
+	@@keysplit_minimum_shares = 5
+	@@keysplit_total_shares = 10
+	@@keysplit_prime = (2**3217)-1
+
+	# Define sleep time.
+	@@sleep_time = 0.0001
+
+	# Set a threshold for large file detection (15000 KiB in bits).
+	@@large_file_threshold = 15000*(2**10)*8
+	@@large_file_threshold_string = "15000KiB"
+
+	def self.ask(prompt)
+		# Loop until the user provides valid input.
+		while true
+			# Print the prompt to the screen (without a newline character).
+			print("#{prompt} [Y/n]: ")
+
+			# Get user input.
+			confirmation = STDIN.gets().chomp()
+
+			# Parse user input and return either true or false accordingly.
+			if confirmation == "Y"
+				return true
+			elsif ["n", "N"].include?(confirmation)
+				return false
+			end
+		end
+	end
+
+	def self.puts_time(string)
+		# Prepend the string with a timestamp before printing it to the screen.
+		puts("#{Time.now}: #{string}")
+	end
+
+	def self.calculate_chunk_count(data)
+		# Calculate the chunk count for a given piece of data. This method is used for master-key size calculation during the encryption process.
+		return (data.length.to_i*8/@@chunk_size)+1
+	end
+
+	def self.encrypt(real_data, decoy_data=nil, output_directory)
+		# Provide size estimate and ask for confirmation.
+		puts()
+		chunk_count = self.calculate_chunk_count(real_data)
+		if decoy_data
+			n = 20
+		else
+			n = 10
+		end
+		size_estimate = (((((@@chunk_size*chunk_count)/2048)*(@@keysplit_prime.to_s.length+7))*(n)+((@@chunk_size/8)*chunk_count)).to_f/1000000.0).ceil
+		confirmation = self.ask("The estimated combined size of all output before compression and tagging is #{size_estimate}MB. Please ensure that the amount of storage space and RAM you have available far exceeds this amount. Are you sure you want to continue?")
+		if not confirmation
+			puts()
+			exit()
+		end
+
+		# Let the user know that the encryption process has started.
+		puts()
+		self.puts_time("Encryption process started. This could take a long time...")
+
+		# Generate master-key alpha.
+		self.puts_time("Generating master-key alpha...")
+		mkey_alpha = String.new()
+		mkey_alpha = SecureRandom.random_bytes((@@chunk_size/8)*chunk_count)
+		self.puts_time("Master-key alpha generated!")
+
+		# Use master-key alpha to generate encrypted data.
+		self.puts_time("Using master-key alpha to encrypt data...")
+		real_data_encrypted = Xorcist.xor(real_data, mkey_alpha)
+		self.puts_time("Encryption of data with master-key alpha complete!")
+
+		# Append random bytes to encrypted data such that it is the same length as both master-keys.
+		self.puts_time("Padding random bytes to encrypted data...")
+		real_data_encrypted << SecureRandom.random_bytes(((@@chunk_size/8)*chunk_count)-real_data.length)
+		self.puts_time("Padding complete!")
+
+		# Generate master-key beta if a decoy file was specified.
+		if decoy_data
+			# Generate the first section of master-key beta by applying XOR-ing every byte of decoy_data with its corresponding byte in real_data_encrypted.
+			self.puts_time("Generating main portion of master-key beta from encrypted data and decoy data...")
+			mkey_beta = Xorcist.xor(decoy_data, real_data_encrypted)
+
+			# Append random bytes to encrypted data such that it is the same length as master-key alpha and the encrypted data.
+			self.puts_time("Appending random bytes to master-key beta...")
+			mkey_beta << SecureRandom.random_bytes(((@@chunk_size/8)*chunk_count)-decoy_data.length)
+			self.puts_time("Master-key beta generated!")
+		end
+
+		# Prepend a tag to each master-key containing version information and the length of the corresponding data in bytes.
+		self.puts_time("Tagging master-key alpha with version and data length...")
+		mkey_alpha = "[RC:#{@@program_version}:#{real_data.length}]".force_encoding("ASCII-8BIT")+mkey_alpha
+		self.puts_time("Master-key alpha tagged!")
+		if decoy_data
+			self.puts_time("Tagging master-key beta with version and data length...")
+			mkey_beta = "[RC:#{@@program_version}:#{decoy_data.length}]".force_encoding("ASCII-8BIT")+mkey_beta
+			self.puts_time("Master-key beta tagged!")
+		end
+
+		# Split master-key alpha into 2000 separate 256B (2048-bit) shares using CLOVERSPLITTER.[
+		self.puts_time("Splitting master-key alpha into multiple keys...")
+		mkey_alpha_shares = Array.new()
+		@@keysplit_total_shares.times do
+			mkey_alpha_shares << String.new()
+		end
+		(0..((@@chunk_size*chunk_count)/2048)-1).each.with_index do |i, j|
+			part = mkey_alpha[j*256, 256]
+			subshares = CloverSplitter.generate_shares(part, minimum=@@keysplit_minimum_shares, shares=@@keysplit_total_shares, prime=@@keysplit_prime)
+			sleep(@@sleep_time)
+			subshares.each.with_index do |u, v|
+				subshare_encoded = "<[#{u[0]}]#{u[1].to_s}>\n"
+				mkey_alpha_shares[v] << subshare_encoded
+				sleep(@@sleep_time)
+			end
+		end
+		self.puts_time("Master-key alpha splitting process complete!")
+
+		# If a decoy file was specified, also split master-key beta into 2000 separate 256B (2048-bit) shares.
+		if decoy_data
+			self.puts_time("Splitting master-key beta into multiple keys...")
+			mkey_beta_shares = Array.new()
+			@@keysplit_total_shares.times do
+				mkey_beta_shares << String.new()
+			end
+			(0..((@@chunk_size*chunk_count)/2048)-1).each.with_index do |i, j|
+				part = mkey_beta[j*256, 256]
+				subshares = CloverSplitter.generate_shares(part, minimum=@@keysplit_minimum_shares, shares=@@keysplit_total_shares, prime=@@keysplit_prime)
+				sleep(@@sleep_time)
+				subshares.each.with_index do |u, v|
+					subshare_encoded = "<[#{u[0]}]#{u[1].to_s}>\n"
+					mkey_beta_shares[v] << subshare_encoded
+					sleep(@@sleep_time)
+				end
+			end
+			self.puts_time("Master-key beta splitting process complete!")
+		end
+
+		# Create timestamp for filename generation.
+		timestamp = (Time.now.to_f*1000).to_i
+
+		# Create version tag.
+		version_tag = "[RC:#{@@program_version}]".force_encoding("ASCII-8BIT")
+
+		# Deflate encrypted data with zlib, tag with @@program_version and save the result to output directory.
+		path = output_directory+"encrypted_#{timestamp}"
+		self.puts_time("Compressing, tagging and saving encrypted data to '#{path}'...")
+		File.open(path, "wb") do |file|
+			deflated_data = Zlib::Deflate.deflate(real_data_encrypted)
+			tagged_data = version_tag+deflated_data
+			file.write(tagged_data)
+		end
+		self.puts_time("Encrypted data saved!")
+
+		# Deflate alpha keys with zlib, tag with @@program_version and save the results to output directory.
+		self.puts_time("Compressing, tagging and saving real keys (derived from master-key alpha):")
+		mkey_alpha_shares.each.with_index do |k, n|
+			index = "%0#{@@keysplit_total_shares.to_s.length}d" % (n+1)
+			path = output_directory+"real_key_#{index}_#{timestamp}"
+			self.puts_time("Saving '#{path}'...")
+			File.open(path, "wb") do |file|
+				deflated_data = Zlib::Deflate.deflate(k[0..-2]) # The [0..-2] part removes the newline character present at the end of k.
+				tagged_data = version_tag+deflated_data
+				file.write(tagged_data)
+			end
+		end
+		self.puts_time("Real keys saved!")
+
+		# If a decoy file was specified, deflate beta keys with zlib, tag with @@program_version and save the results to output directory.
+		if decoy_data
+			self.puts_time("Compressing, tagging and saving decoy keys (derived from master-key beta):")
+			mkey_beta_shares.each.with_index do |k, n|
+				index = "%0#{@@keysplit_total_shares.to_s.length}d" % (n+1)
+				path = output_directory+"decoy_key_#{index}_#{timestamp}"
+				self.puts_time("Saving '#{path}'...")
+				File.open(path, "wb") do |file|
+					deflated_data = Zlib::Deflate.deflate(k[0..-2]) # The [0..-2] part removes the newline character present at the end of k.
+					tagged_data = version_tag+deflated_data
+					file.write(tagged_data)
+				end
+			end
+			self.puts_time("Decoy keys saved!")
+		end
+
+		# Let the user know that encryption was successful.
+		self.puts_time("Encryption process complete! If you used decoy data, please remember to rename all key files such that adversaries do not become aware of that fact.\n\n")
+		exit()
+	end
+
+	def self.version_comparison(version_string)
+		# Compares the current version with the version described by version_string to determine compatibility. True means compatible; false means incompatible.
+		version_split = version_string.force_encoding("ASCII-8BIT").split(".")
+		current_version_split = @@program_version.force_encoding("ASCII-8BIT").split(".")
+		if (version_split[0].to_i < current_version_split[0].to_i)
+			return true
+		elsif (version_split[0].to_i > current_version_split[0].to_i)
+			return false
+		elsif (version_split[1].to_i < current_version_split[1].to_i)
+			return true
+		elsif (version_split[1].to_i > current_version_split[1].to_i)
+			return false
+		elsif (version_split[2].to_i <= current_version_split[2].to_i)
+			return true
+		else
+			return false
+		end
+	end
+
+	def self.decrypt(data, key_list, output_directory)
+		# Let the user know that the encryption process has started.
+		puts()
+		self.puts_time("Decryption process started. This could take a long time...")
+
+		# Untag all keys in key_list.
+		self.puts_time("Untagging keys...")
+		untagged_key_list = Array.new()
+		key_list.each do |k|
+			version_string = k[/\[RC:.*?\]/].split(":")[1][0..-2]
+			if self.version_comparison(version_string)
+				k[/\[RC:.*?\]/] = String.new()
+				untagged_key_list << [version_string, k]
+			else
+				self.puts_time("It would appear that the file specified for decryption was made with #{@@program_name} #{version_string}, which is incompatible with this version of #{@@program_name} (#{@@program_version}). Updating to the latest version of #{@@program_name} may fix this issue.\n\n")
+				exit()
+			end
+		end
+		self.puts_time("Keys untagged!")
+
+		# Untag and inflate data.
+		begin
+			self.puts_time("Untagging and decompressing data...")
+			data[/\[RC:.*?\]/] = String.new()
+			data = Zlib::Inflate.inflate(data)
+			self.puts_time("Data untagged and decompressed!")
+		rescue
+			self.puts_time("Something went wrong whilst untagging and decompressing the data.\n\n")
+			exit()
+		end
+
+		# Inflate all keys in untagged_key_list with zlib.
+		self.puts_time("Decompressing keys...")
+		inflated_key_list = Array.new()
+		untagged_key_list.each do |k|
+			inflated_key_list << [k[0], Zlib::Inflate.inflate(k[1])]
+			sleep(@@sleep_time)
+		end
+		self.puts_time("Keys decompressed!")
+
+		# Parse keys.
+		self.puts_time("Parsing keys...")
+		mkey_shares = Array.new()
+		inflated_key_list.each do |k|
+			k_parts = k[1].split("\n")
+			version_split = k[0].split(".")
+			base64_shares = (version_split[0].to_i <= 0 and version_split[1].to_i <= 2 and version_split[2].to_i <= 3) # For keys generated by versions <= 0.2.3, shares were encoded in base-64.
+			mkey_part_shares = Array.new()
+			k_parts.each do |p|
+				p_extracted = p[1..-2]
+				share_i = p_extracted[/\[.*?\]/][1..-2].to_i
+				p_extracted[/\[.*?\]/] = String.new()
+				if base64_shares
+					share_j = Base64.strict_decode64(p_extracted).to_i
+				else
+					share_j = p_extracted.to_i
+				end
+				mkey_part_shares << [share_i, share_j]
+				sleep(@@sleep_time)
+			end
+			mkey_shares << mkey_part_shares
+			sleep(@@sleep_time)
+		end
+		self.puts_time("Keys parsed!")
+
+		# Calculate chunk count.
+		self.puts_time("Calculating chunk count...")
+		chunk_count = mkey_shares[0].length
+		self.puts_time("Chunk count calculated!")
+
+		# Attempt recovery of tagged master-key.
+		self.puts_time("Attempting master-key recovery...")
+		mkey_tagged = String.new()
+		(0..chunk_count-1).each do |i|
+			chunk_shares = Array.new()
+			mkey_shares.each do |j|
+				chunk_shares << j[i]
+			end
+			begin
+				recovered_chunk = CloverSplitter.recover_secret(chunk_shares, prime=@@keysplit_prime)
+				sleep(@@sleep_time)
+				if recovered_chunk.length != 256
+					self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list, leading to an invalid chunk length.\n\n")
+					exit()
+				end
+				mkey_tagged << recovered_chunk
+			rescue
+				self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list.\n\n")
+				exit()
+			end
+		end
+
+		# Attempt to untag master-key.
+		self.puts_time("Untagging master-key...")
+		if mkey_tagged[/\[RC:.*?\]/]
+			tag = mkey_tagged[/\[RC:.*?\]/]
+			mkey_tagged[/\[RC:.*?\]/] = String.new()
+			tag_array = tag[1..-2].split(":")
+			if not self.version_comparison(tag_array[1])
+				self.puts_time("It would appear that the master-key recovered from the provided key list was generated using #{@@program_name} #{version_string}, which is incompatible with this version of #{@@program_name} (#{@@program_version}). Updating to the latest version of #{@@program_version} may fix this issue.\n\n")
+			end
+			decrypted_data_size = tag_array[-1].to_i
+			mkey = mkey_tagged
+		else
+			# Recovery seems to have failed.
+			self.puts_time("Something went wrong when attempting to recover the master-key from the provided key list, resulting in a malformed tag.\n\n")
+			exit()
+		end
+		self.puts_time("Master-key recovered!")
+
+		# Attempt to decrypt specified data using recovered master-key.
+		self.puts_time("Attempting to decrypt data using recovered master-key...")
+		decrypted_data = Xorcist.xor(data, mkey)[0..decrypted_data_size-1]
+		self.puts_time("Data decrypted!")
+
+		# Create timestamp for filename generation.
+		timestamp = (Time.now.to_f*1000).to_i
+
+		# Save decrypted data to output directory.
+		path = output_directory+"decrypted_#{timestamp}"
+		self.puts_time("Saving decrypted data to '#{path}'...")
+		File.open(path, "wb") do |file|
+			file.write(decrypted_data)
+		end
+		self.puts_time("Decrypted data saved!")
+
+		# Let the user know that decryption was successful.
+		puts("\nDecryption process complete.")
+		exit()
+	end
+
+	def self.start()
+		# Print program information to the screen.
+		puts("#{@@program_name} #{@@program_version}")
+		puts("\nCopyright (C) 2020 Peter Bruce Funnell")
+		puts("\nWARNING: Please be aware that this software has not undergone any form of independent security evaluation and is provided for academic/educational purposes only. RHUBARBCIPHER should not be used to encrypt any data with high confidentiality, availability or integrity requirements, and should be treated purely as a proof of concept and/or learning exercise.")
+		puts("\nThis program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.")
+
+		# Ensure that the current system is either GNU/Linux or BSD.
+		if not (RUBY_PLATFORM.include?("linux") or RUBY_PLATFORM.include?("bsd"))
+			puts("#{@@program_name} is intended for GNU/Linux and BSD operating systems only. Exiting...\n\n")
+			exit()
+		end
+
+		# Initialise command line argument parser.
+		option_parser = OptionParser.new do |options|
+			options.banner = "\nUsage: #{@@executable_name} [OPTIONS]\n\n"
+			options.on("-h", "--help", "Display help text and exit.\n\n")
+			options.on("-v", "--version", "Display version information and exit.\n\n")
+			options.on("-e FILE", "--encrypt FILE", "Encrypt the specified file. An output directory must be specified with '-o' or '--output'.\n\n")
+			options.on("-d FILE", "--decrypt FILE", "Decrypt the specified file. An output directory must be specified with '-o' or '--output'.\n\n")
+			options.on("-D FILE", "--decoy FILE", "Specify a decoy file for plausibly deniable encryption.\n\n")
+			options.on("-k KEYS", "--keys KEYS", "Specify a comma-separated list of keys.\n\n")
+			options.on("-o DIR", "--output DIR", "Specify an output directory. If the directory already exists, files may be overwritten.\n\n")
+		end
+
+		# Attempt to parse command line arguments.
+		begin
+			if ARGV.length < 1
+				# No command line arguments were detected; there is no reason to continue, so exit.
+				puts("\nNo command line arguments were detected. If you would like to view the help text, please execute #{@@program_name} with the -h command line argument.\n\n")
+				exit()
+			else
+				# Command line arguments were detected, so parse those arguments and store the result in a new hash. 
+				arguments = Hash.new()
+				option_parser.parse!(into: arguments)
+			end
+
+			if arguments[:help]
+				# Display help text and exit.
+				puts(option_parser)
+				exit()
+			elsif arguments[:version]
+				# Version information has already been printed, so exit the program.
+				exit()
+			elsif arguments[:encrypt] and arguments[:decrypt]
+				# The user is trying to encrypt and decrypt at the same time. Do not permit such behaviour.
+				puts("\nPlease use either '-e'/'--encrypt' or '-d'/'--decrypt', not both.\n\n")
+				exit()
+			elsif not (arguments[:encrypt] or arguments[:decrypt])
+				# The user is neither encrypting nor decrypting; kindly let them know that they must pick a side.
+				puts("\nA run mode must be specified with either '-e'/'--encrypt' or '-d'/'--decrypt'.\n\n")
+				exit()
+			elsif (arguments[:encrypt] or arguments[:decrypt]) and not (arguments[:output])
+				# The user is trying to encrypt or decrypt without specifying an output directory; kindly let them know that one must be specified.
+				puts("\nAn output directory must be specified with '-o'/'--output' in order to encrypt or decrypt data.\n\n")
+				exit()
+			elsif arguments[:decrypt] and not arguments[:keys]
+				# The user is trying to decrypt without specifying a list of keys; kindly let them know that keys are required in order to decrypt data.
+				puts("\nA comma-separated list of keys must be specified with '-k'/'--keys' in order to decrypt data.\n\n")
+				exit()
+			end
+		rescue OptionParser::InvalidOption, OptionParser::MissingArgument
+			# Invalid command line arguments were detected. Say so, display the help text, and exit.
+			puts("\nOne or more command line arguments were invalid.\n")
+			puts(option_parser)
+			exit()
+		end
+
+		# Create the output directory if it doesn't already exist.
+		begin
+			output_directory = arguments[:output]
+			FileUtils.mkdir_p(output_directory) unless File.exist?(output_directory)
+
+			# Append a slash to output_directory if it does not already end in one.
+			if output_directory[-1] != "/"
+				output_directory += "/"
+			end
+		rescue
+			puts("\nThe directory specified for output did not exist and could not be created by the current user. Please attempt manual creation of the specified directory before re-attempting.\n\n")
+			exit()
+		end
+
+		# Check that the output directory is actually a directory.
+		if not File.directory?(output_directory)
+			puts("\nThe directory specified for output appears to be invalid. Please confirm that the path points to a directory and not a file.\n\n")
+			exit()
+		end
+
+		# Check that the output directory is writable.
+		if not File.writable?(output_directory)
+			puts("\nThe current user does not have write permissions for the specified output directory.\n\n")
+			exit()
+		end
+
+		# Check that the output directory is empty. If it is not, ask for user confirmation before continuing.
+		if not Dir.empty?(output_directory)
+			print("\n")
+			confirmation = self.ask("The directory specified for output already contains one or more files. Files will be overwritten in the event of a filename clash. Are you sure you want to continue?")
+			if not confirmation
+				puts()
+				exit()
+			end
+		end
+
+		# Encrypt or decrypt, depending on run mode.
+		if arguments[:encrypt]
+			# Load real data from specified file.
+			begin
+				# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
+				if File.size(arguments[:encrypt])*8 > @@large_file_threshold
+					print("\n")
+					confirmation = self.ask("The file you specified for encryption is over #{@@large_file_threshold_string}. Large files may take a very long time to encrypt/decrypt using #{@@program_name}. Are you sure you wish to continue?")
+					if not confirmation
+						puts()
+						exit()
+					end
+				end
+
+				real_data = File.read(arguments[:encrypt], mode:"rb")
+			rescue
+				puts("\nThe file specified for encryption could not be loaded. Please confirm that the file exists and is readable by the current user.\n\n")
+				exit()
+			end
+
+			# Load decoy data if specified.
+			if arguments[:decoy]
+				begin
+					decoy_data = File.read(arguments[:decoy], mode:"rb")
+				rescue
+					puts("\nThe specified decoy file could not be loaded. Please confirm that the file exists and is readable by the current user.\n\n")
+					exit()
+				end
+
+				# Calculate chunk count for real data and decoy data for size similarity enforcement.
+				real_data_chunk_count = self.calculate_chunk_count(real_data)
+				decoy_data_chunk_count = self.calculate_chunk_count(decoy_data)
+
+				# Compare chunk count of decoy data with that of real data and enforce size similarity.
+				if real_data_chunk_count != decoy_data_chunk_count
+					puts("\nViolation of size similarity rule detected when comparing size of decoy file with size of file specified for encryption.\n\nFor security reasons, the size of the decoy file must be similar to that of the file specified for encryption. Specifically, if 'A' is the size of the real file in kibibytes (KiB) and 'B' is the size of the decoy file in kibibytes (KiB), the condition 'A\\500 = B\\500' must be satisfied, where '\\' is the integer division operator defined as 'A\\B ≡ ⌊A/B⌋' (alternatively defined as a quotient without the remainder).\n\nThe size similarity rule is strictly enforced as a countermeasure against adversaries determining whether or not decoy data was used during encryption under certain post-decryption circumstances. If this rule were not enforced, an adversary would be able to easily know whether or not a decoy file was used during the encryption process by examining file sizes.\n\n")
+					exit()
+				end
+			else
+				# Set decoy_data to nil if no decoy file was specified.
+				decoy_data = nil
+			end
+
+			# Pass the real data, decoy data and output directory to the decrypt method.
+			begin
+				self.encrypt(real_data, decoy_data, output_directory)
+			rescue Interrupt
+				puts("\nSIGINT received. Exiting...\n\n")
+				exit()
+			end
+		elsif arguments[:decrypt]
+			begin
+				# Check file size of real data in bits and ask for confirmation if over @@large_file_threshold.
+				if File.size(arguments[:decrypt])*8 > @@large_file_threshold
+					print("\n")
+					confirmation = self.ask("The file you specified for decryption is over 15000KiB. It may take a very long time to decrypt. Are you sure you wish to continue?")
+					if not confirmation
+						puts()
+						exit()
+					end
+				end
+
+				# Read data from the file specified for decryption.
+				data = File.read(arguments[:decrypt], mode:"rb")
+			rescue
+				puts("\nSomething went wrong when trying to read the file specified for decryption. Please confirm that the path is valid.\n\n")
+			end
+
+			begin
+				# Create an array from the comma-separated list of key files.
+				key_file_list = arguments[:keys].split(",")
+
+				# Read each key file to create a list of keys.
+				key_list = Array.new()
+				key_file_list.each do |file|
+					key_list << File.read(file, mode:"rb")
+				end
+			rescue
+				puts("\nSomething went wrong when trying to read the specified keys. Please confirm that all paths in the comma-separated list are valid.\n\n")
+			end
+
+			# Pass the data, list of keys and output directory to the decrypt method.
+			begin
+				self.decrypt(data, key_list, output_directory)
+			rescue Interrupt
+				puts("\nSIGINT received. Exiting...\n\n")
+				exit()
+			end
+		end
+	end
+end
+
+# Start RHUBARBCIPHER.
+RhubarbCipherCore.start()
